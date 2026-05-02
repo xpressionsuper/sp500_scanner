@@ -16,8 +16,8 @@ class Config:
     UNIVERSES: list[str] = ["sp500", "sp400"]
 
     # ── 백테스트 ──────────────────────────────────────────────────────
-    BACKTEST_DAYS: int  = 140       # 과거 몇 거래일(봉)까지 소급 검증
-    RUN_BACKTEST:  bool = True     # False 시 백테스트 전체 건너뜀
+    BACKTEST_DAYS: int  = 14       # 과거 몇 거래일(봉)까지 소급 검증
+    RUN_BACKTEST:  bool = False     # False 시 백테스트 전체 건너뜀
 
     # ── 병렬 처리 ─────────────────────────────────────────────────────
     MAX_WORKERS: int = 15
