@@ -1,3 +1,3 @@
 from .report_exporter import ReportExporter
 
-__all__ = ["ReportExporter"]
+__all__ = ["ReportExporter", "TelegramNotifier"]
