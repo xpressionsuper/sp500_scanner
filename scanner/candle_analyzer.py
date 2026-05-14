@@ -60,13 +60,10 @@ class CandleAnalyzer:
             (c.iloc[-3] < ma5.iloc[-3])                                       # ★ 5일선 아래
             and (c.iloc[-3] < o.iloc[-3])                                     # 음봉
             and (body.iloc[-3] > avg_body.iloc[-3])                           # 장대음봉
-            and (o.iloc[-2] < c.iloc[-3])                                     # 갭 하락
-            and (body.iloc[-2] <= (h.iloc[-2] - l.iloc[-2]) * 0.2)            # 도지
+            and (max(o.iloc[-2], c.iloc[-2]) < min(o.iloc[-3], c.iloc[-3]))  # 갭 하락
+            and (body.iloc[-2] <= (h.iloc[-2] - l.iloc[-2]) * 0.2)           # 도지
             and (c.iloc[-1] > o.iloc[-1])                                     # 양봉
-            and (c.iloc[-1] > (o.iloc[-3] + c.iloc[-3]) / 2)                  # 전전봉 중간 돌파
-            and (o.iloc[-1] > c.iloc[-2])                                     # 갭 상승
-            and (c.iloc[-1] >= (c.iloc[-3] + o.iloc[-3])/2   )                # 음봉 몸통 돌파
-            # and (c.iloc[-1] >= ma5.iloc[-1])                                  # ★ 5일선 돌파
+            and (c.iloc[-1] > (o.iloc[-3] + c.iloc[-3]) / 2)                 # 전전봉 중간 돌파
         )
 
         # Piercing Pattern
@@ -75,11 +72,8 @@ class CandleAnalyzer:
             and (c.iloc[-2] < o.iloc[-2])                                     # 음봉
             and (body.iloc[-2] > avg_body.iloc[-2])                           # 장대음봉
             and (o.iloc[-1] < l.iloc[-2])                                     # 당봉 갭 하락 시작
-            and (c.iloc[-1] > (o.iloc[-2] + c.iloc[-2]) / 2)                  # 전봉 몸통 중간 이상
+            and (c.iloc[-1] > (o.iloc[-2] + c.iloc[-2]) / 2)                 # 전봉 몸통 중간 이상
             and (c.iloc[-1] < o.iloc[-2])                                     # 전봉 시가 미만
-            and (l.iloc[-1] < l.iloc[-2])                                     # 전봉 시가 미만
-            and (c.iloc[-1] >= (c.iloc[-2] + o.iloc[-2])/2   )                # 음봉 몸통 돌파
-            # and (c.iloc[-1] >= ma5.iloc[-1])                                  # ★ 5일선 돌파
         )
 
         if is_morning_doji:
@@ -90,7 +84,7 @@ class CandleAnalyzer:
 
     # ── 외부 호출용 분석 ────────────────────────────────────────────────
     def analyze(self, ticker: str, period: str, interval: str) -> dict | None:
-        raw = DataFetcher.fetch(ticker, period, interval)
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
         if raw.empty or len(raw) < 20:
             return None
 
