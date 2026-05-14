@@ -4,12 +4,19 @@ backtest/backtest_engine.py
 과거 N봉 각 시점에서 시그널을 재탐지하여
 현재가 기준 수익률을 계산하는 백테스트 엔진입니다.
 
-IchimokuAnalyzer / CupHandleAnalyzer / CandleAnalyzer 를
-의존성 주입(DI) 방식으로 받아 사용합니다.
+당일 미완성 봉 처리
+-------------------
+yfinance는 장 중에 당일의 미완성 봉을 포함해서 반환합니다.
+미완성 봉이 포함되면 offset 계산이 밀려서
+"어제 시그널"이 backtest에서 누락되는 문제가 발생합니다.
+
+→ 데이터 로드 후 오늘 날짜의 봉이 있으면 자동으로 제거합니다.
+  이렇게 하면 offset=1 이 항상 "가장 최근 완성 봉(어제)"을 가리킵니다.
 """
 
 import sys
 import time
+import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -33,6 +40,25 @@ class BacktestEngine:
         self.candle = candle
         self.cfg    = cfg or Config()
 
+    # ── 당일 미완성 봉 제거 ────────────────────────────────────────────
+    @staticmethod
+    def _strip_incomplete_bar(raw: pd.DataFrame) -> pd.DataFrame:
+        """
+        yfinance가 당일 미완성 봉을 포함한 경우 제거합니다.
+
+        예) 장 중 실행 시 오늘 봉이 마지막에 포함되어 있으면 삭제.
+        완성된 봉(어제)이 가장 최근 봉이 되어 offset 계산이 정확해집니다.
+        """
+        if raw.empty:
+            return raw
+        today = pd.Timestamp(datetime.date.today())
+        last_bar_date = raw.index[-1].normalize() if raw.index.tz is None \
+            else raw.index[-1].tz_localize(None).normalize()
+
+        if last_bar_date >= today:
+            raw = raw.iloc[:-1].copy()
+        return raw
+
     # ── 단일 티커 백테스트 ─────────────────────────────────────────────
     def backtest_ticker(self, ticker: str, period: str, interval: str,
                         lookback_days: int, analyze_type: str) -> list[dict]:
@@ -40,15 +66,19 @@ class BacktestEngine:
         단일 티커의 최근 lookback_days 봉 각 시점에서 시그널 탐지 후
         수익률을 계산한 결과 리스트를 반환합니다.
 
-        Parameters
-        ----------
-        ticker        : 티커 심볼
-        period        : 데이터 수집 기간
-        interval      : 봉 단위 ("1d", "1wk", "1mo")
-        lookback_days : 소급 봉 수
-        analyze_type  : "ichimoku" | "cup" | "candle"
+        offset 구조
+        -----------
+        offset=1 → 가장 최근 완성 봉 (어제)
+        offset=2 → 2거래일 전
+        ...
+        offset=N → N거래일 전
         """
         raw = DataFetcher.fetch(ticker, period, interval)
+        if raw.empty or len(raw) < 120:
+            return []
+
+        # ★ 당일 미완성 봉 제거
+        raw = self._strip_incomplete_bar(raw)
         if raw.empty or len(raw) < 120:
             return []
 
