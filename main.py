@@ -33,7 +33,12 @@ def main() -> None:
         ("1d",  "2y", "일봉"),
         ("1wk", "3y", "주봉"),
     ]
-    today = datetime.today().strftime("%Y%m%d")
+    # SCAN_END_DATE 지정 시 해당 날짜를 파일명 기준으로 사용
+    if cfg.SCAN_END_DATE:
+        today = cfg.SCAN_END_DATE.replace("-", "")
+        print(f"  📅 스캔 기준 날짜: {cfg.SCAN_END_DATE} (과거 재현 모드)")
+    else:
+        today = datetime.today().strftime("%Y%m%d")
 
     # ── 2. 의존성 주입
     ich_analyzer    = IchimokuAnalyzer(cfg)
