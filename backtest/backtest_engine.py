@@ -73,7 +73,7 @@ class BacktestEngine:
         ...
         offset=N → N거래일 전
         """
-        raw = DataFetcher.fetch(ticker, period, interval)
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
         if raw.empty or len(raw) < 120:
             return []
 
