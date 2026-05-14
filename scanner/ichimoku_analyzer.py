@@ -89,7 +89,7 @@ class IchimokuAnalyzer:
         단일 티커 분석 진입점.
         시그널 없거나 필터 탈락 시 None 반환.
         """
-        raw = DataFetcher.fetch(ticker, period, interval)
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
         if raw.empty or len(raw) < 100:
             return None
 
