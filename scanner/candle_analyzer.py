@@ -1,176 +1,138 @@
 """
-backtest/backtest_engine.py
-============================
-과거 N봉 각 시점에서 시그널을 재탐지하여
-현재가 기준 수익률을 계산하는 백테스트 엔진입니다.
+scanner/candle_analyzer.py
+==========================
+캔들 패턴 탐지를 담당합니다.
 
-당일 미완성 봉 처리
--------------------
-yfinance는 장 중에 당일의 미완성 봉을 포함해서 반환합니다.
-미완성 봉이 포함되면 offset 계산이 밀려서
-"어제 시그널"이 backtest에서 누락되는 문제가 발생합니다.
+지원 패턴
+---------
+- Morning Doji Star (샛별형 도지)
+- Piercing Pattern  (관통형)
 
-→ 데이터 로드 후 오늘 날짜의 봉이 있으면 자동으로 제거합니다.
-  이렇게 하면 offset=1 이 항상 "가장 최근 완성 봉(어제)"을 가리킵니다.
+공통 추가 조건
+-------------
+첫 번째 캔들(장대음봉)의 종가가 5일 이동평균선 아래에 있어야 합니다.
+→ 하락 추세 중 눌림이 충분히 진행된 시점에서만 반전 시그널로 인정.
 """
-
-import sys
-import time
-import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 
 from config.settings import Config
 from scanner.data_fetcher import DataFetcher
 from scanner.ichimoku_analyzer import IchimokuAnalyzer
-from scanner.cup_handle_analyzer import CupHandleAnalyzer
-from scanner.candle_analyzer import CandleAnalyzer
 
 
-class BacktestEngine:
+class CandleAnalyzer:
 
-    def __init__(self,
-                 ichimoku: IchimokuAnalyzer,
-                 cup: CupHandleAnalyzer,
-                 candle: CandleAnalyzer,
-                 cfg: Config = None):
-        self.ich    = ichimoku
-        self.cup    = cup
-        self.candle = candle
-        self.cfg    = cfg or Config()
+    def __init__(self, cfg: Config = None):
+        self.cfg = cfg or Config()
 
-    # ── 당일 미완성 봉 제거 ────────────────────────────────────────────
-    @staticmethod
-    def _strip_incomplete_bar(raw: pd.DataFrame) -> pd.DataFrame:
+    # ── 패턴 탐지 (내부) ────────────────────────────────────────────────
+    def _detect(self, df: pd.DataFrame) -> str | None:
         """
-        yfinance가 당일 미완성 봉을 포함한 경우 제거합니다.
+        패턴명 반환, 없으면 None.
 
-        예) 장 중 실행 시 오늘 봉이 마지막에 포함되어 있으면 삭제.
-        완성된 봉(어제)이 가장 최근 봉이 되어 offset 계산이 정확해집니다.
+        [조건 상세]
+        Morning Doji Star:
+          ① 전전봉(iloc[-3]): 장대음봉, 종가 < 5일선
+          ② 전봉(iloc[-2])  : 갭 하락 도지 (몸통 ≤ 전체 길이 × 20%)
+          ③ 당봉(iloc[-1])  : 양봉, 전전봉 몸통 중간 이상까지 상승
+
+        Piercing Pattern:
+          ① 전봉(iloc[-2]): 장대음봉, 종가 < 5일선
+          ② 당봉(iloc[-1]): 전봉 저가 아래 갭 하락 시작,
+                            전봉 몸통 중간 이상 & 전봉 시가 미만 종가
         """
-        if raw.empty:
-            return raw
-        today = pd.Timestamp(datetime.date.today())
-        last_bar_date = raw.index[-1].normalize() if raw.index.tz is None \
-            else raw.index[-1].tz_localize(None).normalize()
+        # 5일선 계산을 위해 최소 15봉 필요
+        if len(df) < 15:
+            return None
 
-        if last_bar_date >= today:
-            raw = raw.iloc[:-1].copy()
-        return raw
+        o = df["Open"]
+        h = df["High"]
+        l = df["Low"]
+        c = df["Close"]
 
-    # ── 단일 티커 백테스트 ─────────────────────────────────────────────
-    def backtest_ticker(self, ticker: str, period: str, interval: str,
-                        lookback_days: int, analyze_type: str) -> list[dict]:
-        """
-        단일 티커의 최근 lookback_days 봉 각 시점에서 시그널 탐지 후
-        수익률을 계산한 결과 리스트를 반환합니다.
+        body     = abs(c - o)
+        avg_body = body.rolling(10).mean()
+        ma5      = c.rolling(5).mean()
 
-        offset 구조
-        -----------
-        offset=1 → 가장 최근 완성 봉 (어제)
-        offset=2 → 2거래일 전
-        ...
-        offset=N → N거래일 전
-        """
-        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
-        if raw.empty or len(raw) < 120:
-            return []
-
-        # ★ 당일 미완성 봉 제거
-        raw = self._strip_incomplete_bar(raw)
-        if raw.empty or len(raw) < 120:
-            return []
-
-        current_close = float(raw["Close"].iloc[-1])
-        total_bars    = len(raw)
-        results       = []
-
-        for offset in range(1, lookback_days + 1):
-            target_idx = total_bars - 1 - offset
-            if target_idx < 100:
-                continue
-
-            signal_date = raw.index[target_idx].strftime("%Y-%m-%d")
-
-            if analyze_type == "ichimoku":
-                res = self.ich.analyze_at(raw, current_close, target_idx)
-            elif analyze_type == "cup":
-                res = self.cup.analyze_at(raw, current_close, target_idx)
-            else:  # candle
-                res = self.candle.analyze_at(raw, current_close, target_idx)
-
-            if res:
-                row = {
-                    "티커":       ticker,
-                    "시그널 날짜": signal_date,
-                    "타임프레임":  IchimokuAnalyzer._tf_label(interval),
-                    "현재가 ($)": round(current_close, 2),
-                }
-                row.update(res)
-                results.append(row)
-
-        return results
-
-    # ── 전체 티커 병렬 백테스트 ───────────────────────────────────────
-    def run(self, tickers: list[str], period: str, interval: str,
-            lookback_days: int, analyze_type: str,
-            label: str = "백테스트") -> pd.DataFrame:
-        """
-        전체 티커에 대한 병렬 백테스트를 실행합니다.
-
-        Returns
-        -------
-        pd.DataFrame : 날짜 내림차순 → 수익률 내림차순 정렬
-        """
-        all_results = []
-        total = len(tickers)
-        done  = 0
-        start = time.time()
-
-        with ThreadPoolExecutor(max_workers=self.cfg.MAX_WORKERS) as executor:
-            future_map = {
-                executor.submit(
-                    self.backtest_ticker, t, period, interval,
-                    lookback_days, analyze_type
-                ): t for t in tickers
-            }
-            for future in as_completed(future_map):
-                ticker = future_map[future]
-                done  += 1
-                try:
-                    rows = future.result()
-                    if rows:
-                        all_results.extend(rows)
-                        tag = f"✅ {ticker:<6} {len(rows)}건"
-                    else:
-                        tag = f"   {ticker:<6}"
-                except Exception:
-                    tag = f"❌ {ticker:<6}"
-
-                self._print_progress(done, total, start, tag)
-
-        elapsed = time.time() - start
-        print(f"\n\n  ⏱  {label} 완료: {elapsed:.1f}초 | {len(all_results)}건\n")
-
-        if not all_results:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(all_results)
-        df = df.sort_values(
-            ["시그널 날짜", "수익률 (%)"], ascending=[False, False]
-        ).reset_index(drop=True)
-        return df
-
-    # ── 진행률 출력 ────────────────────────────────────────────────────
-    @staticmethod
-    def _print_progress(done: int, total: int, start: float, tag: str) -> None:
-        elapsed = time.time() - start
-        eta     = (elapsed / done) * (total - done) if done else 0
-        pct     = done / total * 100
-        bar     = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
-        sys.stdout.write(
-            f"\r  [{bar}] {pct:5.1f}%  {done}/{total}  "
-            f"ETA {eta:4.0f}s  {tag:<35}"
+        # Morning Doji Star
+        is_morning_doji = (
+            (c.iloc[-3] < ma5.iloc[-3])                                       # ★ 5일선 아래
+            and (c.iloc[-3] < o.iloc[-3])                                     # 음봉
+            and (body.iloc[-3] > avg_body.iloc[-3])                           # 장대음봉
+            and (max(o.iloc[-2], c.iloc[-2]) < min(o.iloc[-3], c.iloc[-3]))  # 갭 하락
+            and (body.iloc[-2] <= (h.iloc[-2] - l.iloc[-2]) * 0.2)           # 도지
+            and (c.iloc[-1] > o.iloc[-1])                                     # 양봉
+            and (c.iloc[-1] > (o.iloc[-3] + c.iloc[-3]) / 2)                 # 전전봉 중간 돌파
         )
-        sys.stdout.flush()
+
+        # Piercing Pattern
+        is_piercing = (
+            (c.iloc[-2] < ma5.iloc[-2])                                       # ★ 5일선 아래
+            and (c.iloc[-2] < o.iloc[-2])                                     # 음봉
+            and (body.iloc[-2] > avg_body.iloc[-2])                           # 장대음봉
+            and (o.iloc[-1] < l.iloc[-2])                                     # 당봉 갭 하락 시작
+            and (c.iloc[-1] > (o.iloc[-2] + c.iloc[-2]) / 2)                 # 전봉 몸통 중간 이상
+            and (c.iloc[-1] < o.iloc[-2])                                     # 전봉 시가 미만
+        )
+
+        if is_morning_doji:
+            return "샛별형 도지"
+        if is_piercing:
+            return "관통형"
+        return None
+
+    # ── 외부 호출용 분석 ────────────────────────────────────────────────
+    def analyze(self, ticker: str, period: str, interval: str) -> dict | None:
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
+        if raw.empty or len(raw) < 20:
+            return None
+
+        pattern_name = self._detect(raw)
+        if not pattern_name:
+            return None
+
+        return self._build_result(ticker, interval, raw, pattern_name)
+
+    def analyze_at(self, df_full: pd.DataFrame,
+                   current_close: float, target_idx: int) -> dict | None:
+        """백테스트용: target_idx 시점 기준 패턴 탐지 + 수익률 계산."""
+        df = df_full.iloc[:target_idx + 1].copy()
+        if len(df) < 20:
+            return None
+
+        pattern_name = self._detect(df)
+        if not pattern_name:
+            return None
+
+        latest    = df.iloc[-1]
+        close_val = float(latest["Close"])
+
+        return {
+            "시그널 유형": pattern_name,
+            "진입가 ($)": round(close_val, 2),
+            "시가":        round(float(latest["Open"]), 2),
+            "고가":        round(float(latest["High"]), 2),
+            "저가":        round(float(latest["Low"]), 2),
+            "수익률 (%)":  round((current_close - close_val) / close_val * 100, 2),
+        }
+
+    # ── 내부 헬퍼 ───────────────────────────────────────────────────────
+    def _build_result(self, ticker: str, interval: str,
+                      raw: pd.DataFrame, pattern_name: str) -> dict:
+        latest    = raw.iloc[-1]
+        close_val = float(latest["Close"])
+        high52    = float(raw["High"].iloc[-252:].max())
+        low52     = float(raw["Low"].iloc[-252:].min())
+        pos52     = round((close_val - low52) / (high52 - low52) * 100, 1) if high52 != low52 else 50
+
+        return {
+            "티커":         ticker,
+            "타임프레임":    IchimokuAnalyzer._tf_label(interval),
+            "시그널 유형":   pattern_name,
+            "종가 ($)":     round(close_val, 2),
+            "52주 위치 (%)": pos52,
+            "시가":          round(float(latest["Open"]), 2),
+            "고가":          round(float(latest["High"]), 2),
+            "저가":          round(float(latest["Low"]), 2),
+        }
