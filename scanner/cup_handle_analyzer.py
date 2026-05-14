@@ -79,7 +79,7 @@ class CupHandleAnalyzer:
 
     # ── 외부 호출용 분석 ────────────────────────────────────────────────
     def analyze(self, ticker: str, period: str, interval: str) -> dict | None:
-        raw = DataFetcher.fetch(ticker, period, interval)
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
         if raw.empty or len(raw) < 120:
             return None
 
