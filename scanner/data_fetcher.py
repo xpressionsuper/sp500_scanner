@@ -3,14 +3,18 @@ scanner/data_fetcher.py
 =======================
 스캔 대상 티커 목록 수집 및 yfinance 히스토리 데이터 로드를 담당합니다.
 
-지원 유니버스
-------------
-- S&P 500  (대형주, ~500개)  : UNIVERSES = ["sp500"]
-- S&P 400  (중형주, ~400개)  : UNIVERSES = ["sp400"]
-- 통합       (~900개)         : UNIVERSES = ["sp500", "sp400"]
+SCAN_END_DATE 동작
+------------------
+Config.SCAN_END_DATE 가 None 이면 오늘까지의 최신 데이터를 반환합니다.
+날짜가 지정되면 해당 날짜까지의 데이터만 반환하여 과거 시점을 재현합니다.
+
+yfinance end 파라미터는 exclusive(해당 날짜 미포함)이므로
+지정 날짜의 다음날을 end 로 설정합니다.
+예) SCAN_END_DATE = "2026-05-13"  →  end = "2026-05-14"
 """
 
 import io
+import datetime
 import requests
 import pandas as pd
 import yfinance as yf
@@ -18,52 +22,35 @@ import yfinance as yf
 from config.settings import Config
 
 
-# Wikipedia 티커 소스 정의
 _WIKI_SOURCES: dict[str, dict] = {
     "sp500": {
-        "url":    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-        "col":    "Symbol",
-        "label":  "S&P 500",
+        "url":   "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        "col":   "Symbol",
+        "label": "S&P 500",
     },
     "sp400": {
-        "url":    "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
-        "col":    "Ticker symbol",
-        "label":  "S&P 400 MidCap",
+        "url":   "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
+        "col":   "Ticker symbol",
+        "label": "S&P 400 MidCap",
     },
 }
 
-# Wikipedia 파싱 실패 시 사용할 대체 티커
-_FALLBACK_TICKERS: list[str] = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
-]
+_FALLBACK_TICKERS: list[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 
 
 class DataFetcher:
-    """
-    티커 목록 수집 및 yfinance 데이터 로드를 담당하는 클래스입니다.
-
-    모든 메서드는 staticmethod로 구현되어 있어
-    인스턴스 생성 없이 DataFetcher.method() 형태로 호출 가능합니다.
-    """
 
     # ── 유니버스별 티커 수집 ────────────────────────────────────────────
     @staticmethod
     def _fetch_from_wiki(universe_key: str) -> list[str]:
-        """
-        Wikipedia에서 특정 지수의 티커 목록을 수집합니다.
-        실패 시 빈 리스트 반환.
-        """
         src = _WIKI_SOURCES.get(universe_key)
         if not src:
             print(f"  ⚠️  알 수 없는 유니버스: {universe_key}")
             return []
-
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
             resp    = requests.get(src["url"], headers=headers, timeout=15)
             tables  = pd.read_html(io.StringIO(resp.text))
-
-            # 컬럼명이 일치하는 테이블 탐색
             for table in tables:
                 if src["col"] in table.columns:
                     tickers = (
@@ -75,40 +62,21 @@ class DataFetcher:
                     )
                     print(f"  ✅ {src['label']}: {len(tickers)}개 수집 완료")
                     return tickers
-
             print(f"  ⚠️  {src['label']}: 컬럼 '{src['col']}' 없음")
             return []
-
         except Exception as e:
             print(f"  ❌ {src['label']} 수집 실패: {e}")
             return []
 
     @staticmethod
     def get_tickers(cfg: Config = None) -> list[str]:
-        """
-        Config.UNIVERSES 설정에 따라 티커를 수집하고
-        중복 제거 후 정렬된 통합 리스트를 반환합니다.
-
-        Parameters
-        ----------
-        cfg : Config (None이면 기본값 사용)
-
-        Returns
-        -------
-        list[str] : 중복 없는 티커 목록
-        """
         cfg       = cfg or Config()
-        universes = cfg.UNIVERSES
         all_tickers: list[str] = []
+        print(f"📋 유니버스 수집 대상: {cfg.UNIVERSES}")
+        for key in cfg.UNIVERSES:
+            all_tickers.extend(DataFetcher._fetch_from_wiki(key))
 
-        print(f"📋 유니버스 수집 대상: {universes}")
-        for key in universes:
-            tickers = DataFetcher._fetch_from_wiki(key)
-            all_tickers.extend(tickers)
-
-        # 중복 제거 (순서 보존)
-        seen    = set()
-        unique  = []
+        seen, unique = set(), []
         for t in all_tickers:
             if t not in seen:
                 seen.add(t)
@@ -123,29 +91,53 @@ class DataFetcher:
 
     # ── yfinance 데이터 로드 ────────────────────────────────────────────
     @staticmethod
-    def fetch(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    def fetch(ticker: str, period: str, interval: str,
+              end_date: str | None = None) -> pd.DataFrame:
         """
-        단일 티커의 OHLCV 데이터를 yfinance에서 로드합니다.
+        단일 티커의 OHLCV 데이터를 로드합니다.
 
         Parameters
         ----------
-        ticker   : 티커 심볼 (예: "AAPL")
-        period   : 수집 기간 (예: "2y", "3y", "5y")
-        interval : 봉 단위 (예: "1d", "1wk", "1mo")
+        ticker    : 티커 심볼
+        period    : 수집 기간 (예: "2y")
+        interval  : 봉 단위 (예: "1d", "1wk")
+        end_date  : 기준 날짜 "YYYY-MM-DD" — None 이면 오늘까지
+                    지정 시 해당 날짜가 마지막 봉이 되도록 조회
 
         Returns
         -------
-        pd.DataFrame : OHLCV DataFrame, 실패 시 빈 DataFrame
+        pd.DataFrame : OHLCV, 실패 시 빈 DataFrame
         """
         try:
-            raw = yf.Ticker(ticker).history(
-                period=period,
-                interval=interval,
-                auto_adjust=True,
-            )
-            # timezone 제거 (이후 인덱스 비교 안정화)
+            kwargs = dict(period=period, interval=interval, auto_adjust=True)
+
+            if end_date:
+                # yfinance end 는 exclusive → 지정 날짜 +1일 설정
+                end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+                end_dt += datetime.timedelta(days=1)
+                kwargs["end"] = end_dt.strftime("%Y-%m-%d")
+                # period + end 동시 사용 시 start 가 필요
+                # period 대신 start 로 변환
+                period_map = {"1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
+                days = period_map.get(period, 730)
+                start_dt = end_dt - datetime.timedelta(days=days)
+                kwargs["start"]  = start_dt.strftime("%Y-%m-%d")
+                kwargs.pop("period")
+
+            raw = yf.Ticker(ticker).history(**kwargs)
+
             if raw.index.tz is not None:
                 raw.index = raw.index.tz_localize(None)
             return raw
+
         except Exception:
             return pd.DataFrame()
+
+    # ── end_date 를 Config 에서 읽어 fetch 하는 편의 메서드 ─────────────
+    @staticmethod
+    def fetch_with_cfg(ticker: str, period: str, interval: str,
+                       cfg: Config = None) -> pd.DataFrame:
+        """Config.SCAN_END_DATE 를 자동으로 반영하여 데이터를 로드합니다."""
+        cfg = cfg or Config()
+        return DataFetcher.fetch(ticker, period, interval,
+                                 end_date=cfg.SCAN_END_DATE)
