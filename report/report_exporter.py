@@ -475,6 +475,13 @@ class ReportExporter:
         interval, period = ScannerRunner.TIMEFRAMES[tf]
         raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
         if raw.empty:
+            try:
+                import yfinance as yf
+                yf.Ticker(ticker).history(period=period, interval=interval, raise_errors=True)
+                why = "빈 데이터"
+            except Exception as e:
+                why = repr(e)[:200]
+            print(f"  ⚠️  차트 데이터 없음: {ticker} {tf} — {why}", flush=True)
             return None
         df = IchimokuAnalyzer(self.cfg).compute(raw).tail(120)
         x  = df.index
@@ -576,7 +583,7 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
         with open(filename, "w", encoding="utf-8") as f:
             f.write(page)
-        print(f"🌐 HTML 저장 완료: {filename}")
+        print(f"🌐 HTML 저장 완료: {filename} (차트 {sum(1 for v in cache.values() if v)}개)")
 
     # ══════════════════════════════════════════════════════════════════
     # 이미지 저장
