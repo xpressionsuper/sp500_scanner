@@ -42,23 +42,23 @@ class DataFetcher:
 
     # 티커 → 회사명 (get_tickers 가 위키 표에서 채움, 리포트 표시용)
     NAMES: dict[str, str] = {}
+    SECTORS: dict[str, str] = {}   # 티커 → GICS 섹터 (영문, 위키 표)
     # (티커, 기간, 봉, 기준일) → OHLCV — 한 번 실행 동안 메모리에만 유지
     _CACHE: dict[tuple, pd.DataFrame] = {}
-    _PROFILE: dict[str, tuple[str, float | None]] = {}
+    _YIELD: dict[str, float | None] = {}
 
     @staticmethod
-    def profile(ticker: str) -> tuple[str, float | None]:
-        """(기업 개요, 배당률 %) — yfinance info. 실패 시 ("", None), 성공만 캐시."""
-        if ticker in DataFetcher._PROFILE:
-            return DataFetcher._PROFILE[ticker]
+    def dividend_yield(ticker: str) -> float | None:
+        """배당률 % — yfinance info. 실패 시 None, 성공만 캐시."""
+        if ticker in DataFetcher._YIELD:
+            return DataFetcher._YIELD[ticker]
         try:
             info = yf.Ticker(ticker).info
         except Exception:
-            return "", None
+            return None
         # dividendYield 는 이미 % 단위 (예: 0.31 → 0.31%)
-        p = (info.get("longBusinessSummary") or "", info.get("dividendYield"))
-        DataFetcher._PROFILE[ticker] = p
-        return p
+        DataFetcher._YIELD[ticker] = info.get("dividendYield")
+        return DataFetcher._YIELD[ticker]
 
     # ── 유니버스별 티커 수집 ────────────────────────────────────────────
     @staticmethod
@@ -81,11 +81,10 @@ class DataFetcher:
                         .tolist()
                     )
                     name_col = next((c for c in ("Security", "Company") if c in table.columns), None)
-                    if name_col:
-                        rows = table[[src["col"], name_col]].dropna()
-                        DataFetcher.NAMES.update(
-                            zip(rows[src["col"]].astype(str).str.replace(".", "-", regex=False),
-                                rows[name_col].astype(str)))
+                    syms = table[src["col"]].astype(str).str.replace(".", "-", regex=False)
+                    for col, store in ((name_col, DataFetcher.NAMES), ("GICS Sector", DataFetcher.SECTORS)):
+                        if col in table.columns:
+                            store.update((s, str(v)) for s, v in zip(syms, table[col]) if pd.notna(v))
                     print(f"  ✅ {src['label']}: {len(tickers)}개 수집 완료")
                     return tickers
             print(f"  ⚠️  {src['label']}: 컬럼 '{src['col']}' 없음")

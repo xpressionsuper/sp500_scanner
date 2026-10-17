@@ -517,20 +517,28 @@ class ReportExporter:
     # 웹 표에 보여줄 원본 열 (나머지 지표 열은 xlsx 에만 남김)
     HTML_COLS = ["티커", "타임프레임", "시그널 유형", "시그널 날짜", "수익률 (%)"]
 
+    # GICS 11개 섹터 한글명
+    SECTOR_KO = {
+        "Information Technology": "정보기술", "Health Care": "헬스케어", "Financials": "금융",
+        "Consumer Discretionary": "경기소비재", "Consumer Staples": "필수소비재",
+        "Communication Services": "커뮤니케이션", "Industrials": "산업재", "Energy": "에너지",
+        "Materials": "소재", "Real Estate": "부동산", "Utilities": "유틸리티",
+    }
+
     @staticmethod
     def _html_table(df: pd.DataFrame, href=None) -> str:
         """href(i) 가 주소를 주면 티커를 그 주소로, 아니면 TradingView 로 연결.
-        표시 열: 티커 · 회사명 · (타임프레임 · 시그널 유형 · 시그널 날짜 · 수익률) · 배당률 · 기업 개요"""
+        표시 열: 티커 · 회사명 · 섹터 · (타임프레임 · 시그널 유형 · 시그널 날짜 · 수익률) · 배당률"""
         if df is None or df.empty:
             return '<p class="empty">시그널 종목 없음</p>'
         src = df.reset_index(drop=True)
         d = src[[c for c in ReportExporter.HTML_COLS if c in src.columns]].astype(str).map(html.escape)
-        tickers  = src["티커"].astype(str)
-        profiles = [DataFetcher.profile(t) for t in tickers]
+        tickers = src["티커"].astype(str)
+        sector  = [DataFetcher.SECTORS.get(t, "") for t in tickers]
         d.insert(1, "회사명", [html.escape(DataFetcher.NAMES.get(t, "")) for t in tickers])
-        d["배당률"]   = ["-" if y is None else f"{y:.2f}%" for _, y in profiles]
-        d["기업 개요"] = [f'<div class="ov" onclick="this.classList.toggle(\'open\')">{html.escape(s)}</div>'
-                       if s else "-" for s, _ in profiles]
+        d.insert(2, "섹터", [html.escape(ReportExporter.SECTOR_KO.get(s, s)) or "-" for s in sector])
+        d["배당률"] = ["-" if (y := DataFetcher.dividend_yield(t)) is None else f"{y:.2f}%"
+                     for t in tickers]
         tv = "https://www.tradingview.com/chart/?symbol="
         d["티커"] = [
             f'<a href="{h}">{t}</a>' if (h := href and href(i))
@@ -598,11 +606,7 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 .card-h a{{font-size:15px}}
 .nm{{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .card-h span:last-child{{flex:none}}
-td:nth-child(2),th:nth-child(2){{text-align:left;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis}}
-td:last-child,th:last-child{{text-align:left}}
-.ov{{white-space:normal;min-width:260px;max-width:480px;color:var(--muted);font-size:12px;cursor:pointer;
-display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
-.ov.open{{display:block}}
+td:nth-child(2),th:nth-child(2),td:nth-child(3),th:nth-child(3){{text-align:left;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
 <p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선</p></header>
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
