@@ -44,6 +44,21 @@ class DataFetcher:
     NAMES: dict[str, str] = {}
     # (티커, 기간, 봉, 기준일) → OHLCV — 한 번 실행 동안 메모리에만 유지
     _CACHE: dict[tuple, pd.DataFrame] = {}
+    _PROFILE: dict[str, tuple[str, float | None]] = {}
+
+    @staticmethod
+    def profile(ticker: str) -> tuple[str, float | None]:
+        """(기업 개요, 배당률 %) — yfinance info. 실패 시 ("", None), 성공만 캐시."""
+        if ticker in DataFetcher._PROFILE:
+            return DataFetcher._PROFILE[ticker]
+        try:
+            info = yf.Ticker(ticker).info
+        except Exception:
+            return "", None
+        # dividendYield 는 이미 % 단위 (예: 0.31 → 0.31%)
+        p = (info.get("longBusinessSummary") or "", info.get("dividendYield"))
+        DataFetcher._PROFILE[ticker] = p
+        return p
 
     # ── 유니버스별 티커 수집 ────────────────────────────────────────────
     @staticmethod

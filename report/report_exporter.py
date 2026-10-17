@@ -514,20 +514,28 @@ class ReportExporter:
         return fig.to_html(full_html=False, include_plotlyjs="cdn" if js else False,
                            config={"displayModeBar": False, "responsive": True, "scrollZoom": False})
 
+    # 웹 표에 보여줄 원본 열 (나머지 지표 열은 xlsx 에만 남김)
+    HTML_COLS = ["티커", "타임프레임", "시그널 유형", "시그널 날짜", "수익률 (%)"]
+
     @staticmethod
     def _html_table(df: pd.DataFrame, href=None) -> str:
-        """href(i) 가 주소를 주면 티커를 그 주소로, 아니면 TradingView 로 연결."""
+        """href(i) 가 주소를 주면 티커를 그 주소로, 아니면 TradingView 로 연결.
+        표시 열: 티커 · 회사명 · (타임프레임 · 시그널 유형 · 시그널 날짜 · 수익률) · 배당률 · 기업 개요"""
         if df is None or df.empty:
             return '<p class="empty">시그널 종목 없음</p>'
-        d = df.reset_index(drop=True).astype(str).map(html.escape)
-        if "티커" in d.columns:
-            d.insert(d.columns.get_loc("티커") + 1, "회사명",
-                     [html.escape(DataFetcher.NAMES.get(html.unescape(t), "")) for t in d["티커"]])
-            tv = "https://www.tradingview.com/chart/?symbol="
-            d["티커"] = [
-                f'<a href="{h}">{t}</a>' if (h := href and href(i))
-                else f'<a href="{tv}{t}" target="_blank">{t}</a>'
-                for i, t in enumerate(d["티커"])]
+        src = df.reset_index(drop=True)
+        d = src[[c for c in ReportExporter.HTML_COLS if c in src.columns]].astype(str).map(html.escape)
+        tickers  = src["티커"].astype(str)
+        profiles = [DataFetcher.profile(t) for t in tickers]
+        d.insert(1, "회사명", [html.escape(DataFetcher.NAMES.get(t, "")) for t in tickers])
+        d["배당률"]   = ["-" if y is None else f"{y:.2f}%" for _, y in profiles]
+        d["기업 개요"] = [f'<div class="ov" onclick="this.classList.toggle(\'open\')">{html.escape(s)}</div>'
+                       if s else "-" for s, _ in profiles]
+        tv = "https://www.tradingview.com/chart/?symbol="
+        d["티커"] = [
+            f'<a href="{h}">{t}</a>' if (h := href and href(i))
+            else f'<a href="{tv}{t}" target="_blank">{t}</a>'
+            for i, t in enumerate(d["티커"])]
         if "수익률 (%)" in d.columns:
             d["수익률 (%)"] = [
                 f'<span class="{"dn" if v.startswith("-") else "up"}">{v}</span>'
@@ -551,7 +559,7 @@ class ReportExporter:
                     if not cache[key]:
                         continue
                     meta = " · ".join(html.escape(str(row[c]))
-                                      for c in ("타임프레임", "시그널 유형", "종가 ($)") if c in row)
+                                      for c in ("타임프레임", "시그널 유형") if c in row)
                     et   = html.escape(t)
                     name = html.escape(DataFetcher.NAMES.get(t, ""))
                     cards.append(f'<div class="card" id="c{si}-{ri}"><div class="card-h">'
@@ -591,6 +599,10 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 .nm{{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .card-h span:last-child{{flex:none}}
 td:nth-child(2),th:nth-child(2){{text-align:left;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis}}
+td:last-child,th:last-child{{text-align:left}}
+.ov{{white-space:normal;min-width:260px;max-width:480px;color:var(--muted);font-size:12px;cursor:pointer;
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
+.ov.open{{display:block}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
 <p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선</p></header>
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
