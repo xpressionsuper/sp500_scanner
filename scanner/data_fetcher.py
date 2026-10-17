@@ -42,6 +42,8 @@ class DataFetcher:
 
     # 티커 → 회사명 (get_tickers 가 위키 표에서 채움, 리포트 표시용)
     NAMES: dict[str, str] = {}
+    # (티커, 기간, 봉, 기준일) → OHLCV — 한 번 실행 동안 메모리에만 유지
+    _CACHE: dict[tuple, pd.DataFrame] = {}
 
     # ── 유니버스별 티커 수집 ────────────────────────────────────────────
     @staticmethod
@@ -116,7 +118,14 @@ class DataFetcher:
         Returns
         -------
         pd.DataFrame : OHLCV, 실패 시 빈 DataFrame
+
+        같은 (티커, 기간, 봉, 기준일) 은 한 번만 받아 재사용합니다 — 일목·컵핸들·캔들·
+        백테스트·차트가 같은 데이터를 각자 요청해 Yahoo 요청 한도(429)에 걸리던 문제 방지.
+        실패(빈 결과)는 캐시하지 않습니다.
         """
+        key = (ticker, period, interval, end_date)
+        if key in DataFetcher._CACHE:
+            return DataFetcher._CACHE[key].copy()
         try:
             kwargs = dict(period=period, interval=interval, auto_adjust=True)
 
@@ -137,7 +146,9 @@ class DataFetcher:
 
             if raw.index.tz is not None:
                 raw.index = raw.index.tz_localize(None)
-            return raw
+            if not raw.empty:
+                DataFetcher._CACHE[key] = raw
+            return raw.copy()
 
         except Exception:
             return pd.DataFrame()
