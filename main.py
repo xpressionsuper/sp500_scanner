@@ -60,15 +60,17 @@ def main() -> None:
     final_ich    = scan_results["ichimoku"]
     final_cup    = scan_results["cup"]
     final_candle = scan_results["candle"]
+    final_bb     = scan_results["bollinger"]
 
     # ── 5. 백테스트
-    df_bt_ich = df_bt_cup = df_bt_candle = pd.DataFrame()
+    df_bt_ich = df_bt_cup = df_bt_candle = df_bt_bb = pd.DataFrame()
     bt_summary = {}
 
     if cfg.RUN_BACKTEST:
         bt_ich_frames = []
         bt_cup_frames = []
         bt_candle_frames = []
+        bt_bb_frames = []
 
         for interval, period, tf_name in BACKTEST_TIMEFRAMES:
             print(f"\n🔍 [백테스트] 일목균형표 {tf_name}\n")
@@ -89,14 +91,22 @@ def main() -> None:
                                label=f"캔들 {tf_name} 백테스트")
             if not df.empty: bt_candle_frames.append(df)
 
+            print(f"\n🔍 [백테스트] 볼린저 밴드 {tf_name}\n")
+            df = bt_engine.run(tickers, period=period, interval=interval,
+                               lookback_days=cfg.BACKTEST_DAYS, analyze_type="bollinger",
+                               label=f"볼린저 {tf_name} 백테스트")
+            if not df.empty: bt_bb_frames.append(df)
+
         df_bt_ich    = pd.concat(bt_ich_frames,    ignore_index=True) if bt_ich_frames    else pd.DataFrame()
         df_bt_cup    = pd.concat(bt_cup_frames,    ignore_index=True) if bt_cup_frames    else pd.DataFrame()
         df_bt_candle = pd.concat(bt_candle_frames, ignore_index=True) if bt_candle_frames else pd.DataFrame()
+        df_bt_bb     = pd.concat(bt_bb_frames,     ignore_index=True) if bt_bb_frames     else pd.DataFrame()
 
         print("\n" + "=" * 65)
         print(f"  📊  백테스트 요약 (최근 {cfg.BACKTEST_DAYS}거래일)")
         print("=" * 65)
-        for name, df_bt in [("일목균형표", df_bt_ich), ("컵앤핸들", df_bt_cup), ("캔들 패턴", df_bt_candle)]:
+        for name, df_bt in [("일목균형표", df_bt_ich), ("컵앤핸들", df_bt_cup), ("캔들 패턴", df_bt_candle),
+                           ("볼린저 밴드", df_bt_bb)]:
             if not df_bt.empty and "수익률 (%)" in df_bt.columns:
                 avg = df_bt["수익률 (%)"].mean()
                 pos = int((df_bt["수익률 (%)"] >= 0).sum())
@@ -109,31 +119,33 @@ def main() -> None:
         print("=" * 65)
 
     # ── 6. 콘솔 요약
-    total = len(final_ich) + len(final_cup) + len(final_candle)
+    total = len(final_ich) + len(final_cup) + len(final_candle) + len(final_bb)
     print("\n" + "=" * 65)
     print("  📊  오늘 스캔 요약")
     print("=" * 65)
-    print(f"  일목균형표: {len(final_ich)}개  |  컵앤핸들: {len(final_cup)}개  |  캔들: {len(final_candle)}개  |  합계: {total}개")
+    print(f"  일목균형표: {len(final_ich)}개  |  컵앤핸들: {len(final_cup)}개  |  캔들: {len(final_candle)}개  |  볼린저: {len(final_bb)}개  |  합계: {total}개")
     print("=" * 65)
 
     # ── 6.5 HTML (결과가 없어도 항상 생성 → Pages 배포)
     exporter.save_html("index.html", [
-        ("일목균형표",      final_ich, True),
-        ("컵앤핸들",        final_cup, True),
-        ("캔들 패턴",       final_candle, True),
+        ("일목균형표",      final_ich, "ichimoku"),
+        ("컵앤핸들",        final_cup, "ichimoku"),
+        ("캔들 패턴",       final_candle, "ichimoku"),
+        ("볼린저 밴드",     final_bb, "bollinger"),
         ("백테스트·일목",   df_bt_ich, False),
         ("백테스트·컵핸들", df_bt_cup, False),
         ("백테스트·캔들",   df_bt_candle, False),
+        ("백테스트·볼린저", df_bt_bb, False),
     ])
 
     # ── 7. 저장
-    any_result = any([not final_ich.empty, not final_cup.empty, not final_candle.empty,
-                      not df_bt_ich.empty, not df_bt_cup.empty, not df_bt_candle.empty])
+    any_result = any([not final_ich.empty, not final_cup.empty, not final_candle.empty, not final_bb.empty,
+                      not df_bt_ich.empty, not df_bt_cup.empty, not df_bt_candle.empty, not df_bt_bb.empty])
 
     if not any_result:
         print("\n⚠️ 검색 조건에 부합하는 종목이 없습니다.")
         if telegram.enabled:
-            telegram.send_daily_report(today=today, n_ich=0, n_cup=0, n_candle=0,
+            telegram.send_daily_report(today=today, n_ich=0, n_cup=0, n_candle=0, n_bb=0,
                                        bt_summary=bt_summary, image_files=[], xlsx_file="")
         return
 
@@ -150,6 +162,7 @@ def main() -> None:
     if telegram.enabled:
         telegram.send_daily_report(
             today=today, n_ich=len(final_ich), n_cup=len(final_cup), n_candle=len(final_candle),
+            n_bb=len(final_bb),
             bt_summary=bt_summary, image_files=[], xlsx_file=fname,
         )
 

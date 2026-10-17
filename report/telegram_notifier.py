@@ -127,7 +127,8 @@ class TelegramNotifier:
                           n_candle: int,
                           bt_summary: dict,
                           image_files: list[str],
-                          xlsx_file: str) -> None:
+                          xlsx_file: str,
+                          n_bb: int = 0) -> None:
         """
         하루 스캔 결과를 순서대로 전송합니다.
           1. 요약 텍스트
@@ -151,7 +152,8 @@ class TelegramNotifier:
             f"  • 일목균형표 : *{n_ich}개*",
             f"  • 컵앤핸들   : *{n_cup}개*",
             f"  • 캔들 패턴  : *{n_candle}개*",
-            f"  • 합계       : *{n_ich + n_cup + n_candle}개*",
+            f"  • 볼린저 밴드 : *{n_bb}개*",
+            f"  • 합계       : *{n_ich + n_cup + n_candle + n_bb}개*",
         ]
 
         if bt_summary:

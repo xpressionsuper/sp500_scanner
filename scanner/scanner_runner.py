@@ -22,6 +22,7 @@ from config.settings import Config
 from scanner.ichimoku_analyzer import IchimokuAnalyzer
 from scanner.cup_handle_analyzer import CupHandleAnalyzer
 from scanner.candle_analyzer import CandleAnalyzer
+from scanner.bollinger_analyzer import BollingerAnalyzer
 
 
 class ScannerRunner:
@@ -39,11 +40,13 @@ class ScannerRunner:
                  ichimoku: IchimokuAnalyzer,
                  cup: CupHandleAnalyzer,
                  candle: CandleAnalyzer,
-                 cfg: Config = None):
+                 cfg: Config = None,
+                 bollinger: BollingerAnalyzer = None):
         self.ich    = ichimoku
         self.cup    = cup
         self.candle = candle
         self.cfg    = cfg or Config()
+        self.bb     = bollinger or BollingerAnalyzer(self.cfg)
 
     # ── 주봉 완성일 여부 판단 ───────────────────────────────────────────
     @staticmethod
@@ -140,6 +143,7 @@ class ScannerRunner:
         ich_frames    = []
         cup_frames    = []
         candle_frames = []
+        bb_frames     = []
 
         # 주봉 완성일 여부 사전 판단 (1회만)
         is_weekly_day = self._is_last_trading_day_of_week()
@@ -175,6 +179,12 @@ class ScannerRunner:
             if not df.empty:
                 candle_frames.append(df)
 
+            print(f"🔍 [볼린저 밴드] {tf_name} 스캔 ({len(tickers)}개 종목)\n")
+            df = self._scan_one(tickers, self.bb.analyze,
+                                period, interval, f"볼린저 {tf_name}")
+            if not df.empty:
+                bb_frames.append(df)
+
         final_ich    = self._sort_ichimoku(
             pd.concat(ich_frames,    ignore_index=True) if ich_frames    else pd.DataFrame()
         )
@@ -185,7 +195,9 @@ class ScannerRunner:
             pd.concat(candle_frames, ignore_index=True) if candle_frames else pd.DataFrame()
         )
 
-        return {"ichimoku": final_ich, "cup": final_cup, "candle": final_candle}
+        final_bb = pd.concat(bb_frames, ignore_index=True) if bb_frames else pd.DataFrame()
+
+        return {"ichimoku": final_ich, "cup": final_cup, "candle": final_candle, "bollinger": final_bb}
 
     # ── 월봉 완성일 여부 판단 ───────────────────────────────────────────
     @staticmethod

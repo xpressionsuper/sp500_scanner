@@ -464,10 +464,14 @@ class ReportExporter:
     _FONT = "Inter, 'Nanum Gothic', sans-serif"
     MAX_CHARTS = 30   # 섹션당 차트 수 상한 (페이지 크기 제한)
 
-    def _ticker_chart(self, ticker: str, tf: str, level=None, js=False) -> str | None:
-        """최근 120봉 캔들 + 일목 구름/기준선 (+ 돌파 기준선) Plotly div."""
+    def _ticker_chart(self, ticker: str, tf: str, level=None, js=False,
+                      kind: str = "ichimoku") -> str | None:
+        """최근 120봉 캔들 Plotly div.
+        kind="ichimoku"  : 일목 구름/기준선 (+ 돌파 기준선)
+        kind="bollinger" : 80이평 중심 ±1σ/±2σ 밴드 + 5이평"""
         import plotly.graph_objects as go
         from scanner.ichimoku_analyzer import IchimokuAnalyzer
+        from scanner.bollinger_analyzer import BollingerAnalyzer
         from scanner.scanner_runner import ScannerRunner
 
         if tf not in ScannerRunner.TIMEFRAMES:
@@ -483,19 +487,39 @@ class ReportExporter:
                 why = repr(e)[:200]
             print(f"  ⚠️  차트 데이터 없음: {ticker} {tf} — {why}", flush=True)
             return None
-        df = IchimokuAnalyzer(self.cfg).compute(raw).tail(120)
-        x  = df.index
-        a, b, bull = df["senkou_a"], df["senkou_b"], df["cloud_bullish"]
-
         def band(lo, hi, color):   # lo~hi 사이를 칠함 (hi==lo 인 구간은 두께 0)
             return [go.Scatter(x=x, y=lo, line=dict(width=0), hoverinfo="skip", showlegend=False),
                     go.Scatter(x=x, y=hi, line=dict(width=0), fill="tonexty", fillcolor=color,
                                hoverinfo="skip", showlegend=False)]
 
+        def line(y, color, name, dash=None, width=1):
+            return go.Scatter(x=x, y=y, name=name, line=dict(color=color, width=width, dash=dash))
+
+        if kind == "bollinger":
+            df = BollingerAnalyzer(self.cfg).compute(raw).tail(120)
+            x  = df.index
+            overlay = [
+                *band(df["bb_dn2"], df["bb_up2"], "rgba(0,212,255,.06)"),   # ±2σ
+                *band(df["bb_dn1"], df["bb_up1"], "rgba(0,212,255,.10)"),   # ±1σ
+                line(df["bb_up2"], "#00d4ff", "+2σ", "dot"),
+                line(df["bb_up1"], "#00d4ff", "+1σ"),
+                line(df["bb_mid"], "#8b949e", f"{self.cfg.BB_PERIOD}이평", "dash"),
+                line(df["bb_dn1"], "#00d4ff", "-1σ"),
+                line(df["bb_dn2"], "#00d4ff", "-2σ", "dot"),
+                line(df["ma_fast"], "#ffd166", f"{self.cfg.BB_FAST_MA}이평", width=1.5),
+            ]
+        else:
+            df = IchimokuAnalyzer(self.cfg).compute(raw).tail(120)
+            x  = df.index
+            a, b, bull = df["senkou_a"], df["senkou_b"], df["cloud_bullish"]
+            overlay = [
+                *band(b, a.where(bull, b), "rgba(63,185,80,.18)"),     # 녹색(상승) 구름
+                *band(a, b.where(~bull, a), "rgba(248,81,73,.18)"),    # 적색(하락) 구름
+                line(df["kijun"], "#ffd166", "기준선"),
+            ]
+
         fig = go.Figure([
-            *band(b, a.where(bull, b), "rgba(63,185,80,.18)"),     # 녹색(상승) 구름
-            *band(a, b.where(~bull, a), "rgba(248,81,73,.18)"),    # 적색(하락) 구름
-            go.Scatter(x=x, y=df["kijun"], line=dict(color="#ffd166", width=1), name="기준선"),
+            *overlay,
             go.Candlestick(x=x, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
                            increasing_line_color="#3fb950", decreasing_line_color="#f85149",
                            name=ticker),
@@ -550,20 +574,22 @@ class ReportExporter:
                 for v in d["수익률 (%)"]]
         return '<div class="scroll">' + d.to_html(index=False, escape=False, border=0) + "</div>"
 
-    def save_html(self, filename: str, sections: list[tuple[str, pd.DataFrame, bool]]) -> None:
-        """[(제목, DataFrame, 차트여부), ...] 를 한 페이지 HTML 로 저장합니다."""
+    def save_html(self, filename: str, sections: list[tuple[str, pd.DataFrame, str | None]]) -> None:
+        """[(제목, DataFrame, 차트 종류), ...] 를 한 페이지 HTML 로 저장합니다.
+        차트 종류: "ichimoku" / "bollinger" / None(표만)"""
         tv = "https://www.tradingview.com/chart/?symbol="
         nav, body, cache = [], [], {}
-        for si, (title, df, with_chart) in enumerate(sections):
+        for si, (title, df, chart_kind) in enumerate(sections):
             n = 0 if df is None else len(df)
             nav.append(f'<a href="#s{si}">{html.escape(title)} <b>{n}</b></a>')
             cards, ids = [], set()
-            if with_chart and n:
+            if chart_kind and n:
                 for ri, row in df.reset_index(drop=True).head(self.MAX_CHARTS).iterrows():
                     t, tf = str(row["티커"]), str(row.get("타임프레임", "일봉"))
-                    key = (t, tf, row.get("돌파 기준선"))
+                    key = (t, tf, row.get("돌파 기준선"), chart_kind)
                     if key not in cache:
-                        cache[key] = self._ticker_chart(t, tf, key[2], js=not any(cache.values()))
+                        cache[key] = self._ticker_chart(t, tf, key[2], js=not any(cache.values()),
+                                                        kind=chart_kind)
                     if not cache[key]:
                         continue
                     meta = " · ".join(html.escape(str(row[c]))
@@ -608,7 +634,7 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 .card-h span:last-child{{flex:none}}
 td:nth-child(2),th:nth-child(2),td:nth-child(3),th:nth-child(3){{text-align:left;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
-<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선</p></header>
+<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선 · 볼린저: 하늘색=80이평±1σ/2σ, 노란선=5이평</p></header>
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
         with open(filename, "w", encoding="utf-8") as f:
             f.write(page)

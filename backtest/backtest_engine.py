@@ -26,6 +26,7 @@ from scanner.data_fetcher import DataFetcher
 from scanner.ichimoku_analyzer import IchimokuAnalyzer
 from scanner.cup_handle_analyzer import CupHandleAnalyzer
 from scanner.candle_analyzer import CandleAnalyzer
+from scanner.bollinger_analyzer import BollingerAnalyzer
 
 
 class BacktestEngine:
@@ -34,11 +35,13 @@ class BacktestEngine:
                  ichimoku: IchimokuAnalyzer,
                  cup: CupHandleAnalyzer,
                  candle: CandleAnalyzer,
-                 cfg: Config = None):
+                 cfg: Config = None,
+                 bollinger: BollingerAnalyzer = None):
         self.ich    = ichimoku
         self.cup    = cup
         self.candle = candle
         self.cfg    = cfg or Config()
+        self.bb     = bollinger or BollingerAnalyzer(self.cfg)
 
     # ── 당일 미완성 봉 제거 ────────────────────────────────────────────
     @staticmethod
@@ -97,6 +100,8 @@ class BacktestEngine:
                 res = self.ich.analyze_at(raw, current_close, target_idx)
             elif analyze_type == "cup":
                 res = self.cup.analyze_at(raw, current_close, target_idx)
+            elif analyze_type == "bollinger":
+                res = self.bb.analyze_at(raw, current_close, target_idx)
             else:  # candle
                 res = self.candle.analyze_at(raw, current_close, target_idx)
 
