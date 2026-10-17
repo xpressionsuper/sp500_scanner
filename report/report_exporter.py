@@ -485,10 +485,16 @@ class ReportExporter:
             return None
         df = IchimokuAnalyzer(self.cfg).compute(raw).tail(120)
         x  = df.index
+        a, b, bull = df["senkou_a"], df["senkou_b"], df["cloud_bullish"]
+
+        def band(lo, hi, color):   # lo~hi 사이를 칠함 (hi==lo 인 구간은 두께 0)
+            return [go.Scatter(x=x, y=lo, line=dict(width=0), hoverinfo="skip", showlegend=False),
+                    go.Scatter(x=x, y=hi, line=dict(width=0), fill="tonexty", fillcolor=color,
+                               hoverinfo="skip", showlegend=False)]
+
         fig = go.Figure([
-            go.Scatter(x=x, y=df["senkou_a"], line=dict(width=0), hoverinfo="skip", showlegend=False),
-            go.Scatter(x=x, y=df["senkou_b"], line=dict(width=0), fill="tonexty",
-                       fillcolor="rgba(0,212,255,.12)", hoverinfo="skip", showlegend=False),
+            *band(b, a.where(bull, b), "rgba(63,185,80,.18)"),     # 녹색(상승) 구름
+            *band(a, b.where(~bull, a), "rgba(248,81,73,.18)"),    # 적색(하락) 구름
             go.Scatter(x=x, y=df["kijun"], line=dict(color="#ffd166", width=1), name="기준선"),
             go.Candlestick(x=x, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
                            increasing_line_color="#3fb950", decreasing_line_color="#f85149",
@@ -579,7 +585,7 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 .card-h{{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:12px;color:var(--muted)}}
 .card-h a{{font-size:15px}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
-<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 하늘색 구름=일목 · 노란선=기준선 · 점선=돌파 기준선</p></header>
+<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선</p></header>
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
         with open(filename, "w", encoding="utf-8") as f:
             f.write(page)

@@ -54,30 +54,36 @@ class IchimokuAnalyzer:
         close  = df["Close"]
         low    = df["Low"]
         ct     = df["cloud_top"]
+        cb     = df["cloud_bottom"]
         bull   = df["cloud_bullish"]
         tenkan = df["tenkan"]
         buf    = self.cfg.BREAKOUT_BUFFER
+        L      = self.cfg.PULLBACK_BARS
 
         s1 = pd.Series(False, index=df.index)
         s2 = pd.Series(False, index=df.index)
 
-        for i in range(1, len(df)):
+        for i in range(2 * L, len(df)):
             if pd.isna(ct.iloc[i]):
                 continue
 
-            # 구름 돌파: 적색 구름을 상향 돌파
-            if (not bull.iloc[i]
-                    and close.iloc[i - 1] <= ct.iloc[i - 1]
-                    and close.iloc[i] > ct.iloc[i] * buf):
-                s1.iloc[i] = True
-
-            # 지지 반등: 녹색 구름 위에서 구름 상단 근처 눌림 후 반등
+            # 지지 반등: 구름 위에 있던 주가가 (녹색) 구름 상단까지 눌렸다가 반등
+            #   - 눌림 전 L봉(i-2L ~ i-L)은 종가가 모두 구름 위
+            #   - 눌림 L봉(i-L ~ i) 동안 종가가 구름 하단 아래로 빠지지 않음
             if (bull.iloc[i]
                     and close.iloc[i] > ct.iloc[i] * buf
                     and close.iloc[i - 1] <= ct.iloc[i - 1] * 1.01
-                    and (low.iloc[i - 5:i] <= ct.iloc[i - 5:i]).any()
+                    and (low.iloc[i - L:i] <= ct.iloc[i - L:i]).any()
+                    and (close.iloc[i - 2 * L:i - L] > ct.iloc[i - 2 * L:i - L]).all()
+                    and (close.iloc[i - L:i] >= cb.iloc[i - L:i]).all()
                     and tenkan.iloc[i] >= tenkan.iloc[i - 1]):
                 s2.iloc[i] = True
+
+            # 구름 돌파: 구름 상단 아래(안/밑)에서 상단을 상향 돌파 — 구름 색 무관
+            #   지지 반등으로 잡힌 봉은 제외 (두 시그널 배타)
+            elif (close.iloc[i - 1] <= ct.iloc[i - 1]
+                    and close.iloc[i] > ct.iloc[i] * buf):
+                s1.iloc[i] = True
 
         df["signal_breakout"] = s1
         df["signal_pullback"] = s2
