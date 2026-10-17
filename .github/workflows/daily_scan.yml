@@ -32,12 +32,6 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 🔤 한글 폰트 설치
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-nanum
-          fc-cache -fv
-
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
 
@@ -45,23 +39,9 @@ jobs:
         run: python main.py
         env:
           TZ: Asia/Seoul
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-
-      - name: 💾 결과물 업로드
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scan-results-${{ github.run_id }}
-          retention-days: 30
-          path: |
-            *.xlsx
-            *.png
 
       - name: 🌐 Pages용 파일 준비
-        run: |
-          mkdir site && cp index.html site/
-          cp *.xlsx site/ 2>/dev/null || true
+        run: mkdir site && cp index.html site/
 
       - uses: actions/upload-pages-artifact@v3
         with:
