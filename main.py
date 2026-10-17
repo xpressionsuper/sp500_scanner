@@ -116,6 +116,16 @@ def main() -> None:
     print(f"  일목균형표: {len(final_ich)}개  |  컵앤핸들: {len(final_cup)}개  |  캔들: {len(final_candle)}개  |  합계: {total}개")
     print("=" * 65)
 
+    # ── 6.5 HTML (결과가 없어도 항상 생성 → Pages 배포)
+    exporter.save_html("index.html", [
+        ("일목균형표",      final_ich),
+        ("컵앤핸들",        final_cup),
+        ("캔들 패턴",       final_candle),
+        ("백테스트·일목",   df_bt_ich),
+        ("백테스트·컵핸들", df_bt_cup),
+        ("백테스트·캔들",   df_bt_candle),
+    ])
+
     # ── 7. 저장
     any_result = any([not final_ich.empty, not final_cup.empty, not final_candle.empty,
                       not df_bt_ich.empty, not df_bt_cup.empty, not df_bt_candle.empty])

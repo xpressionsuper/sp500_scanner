@@ -2,13 +2,25 @@ name: 📈 Daily Stock Scanner
 
 on:
   schedule:
-    # - cron: '0 23 * * 0-4'
+    - cron: '0 23 * * 0-4'   # 평일 08:00 KST (UTC 일~목 23:00)
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
       - name: 📥 코드 체크아웃
@@ -44,3 +56,16 @@ jobs:
           path: |
             *.xlsx
             *.png
+
+      - name: 🌐 Pages용 파일 준비
+        run: |
+          mkdir site && cp index.html site/
+          cp *.xlsx site/ 2>/dev/null || true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 🚀 GitHub Pages 배포
+        id: deploy
+        uses: actions/deploy-pages@v4

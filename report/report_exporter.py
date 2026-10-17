@@ -4,6 +4,7 @@ report/report_exporter.py
 스캔 결과를 xlsx(다중 시트) 및 PNG 이미지로 저장합니다.
 """
 
+import html
 import sys
 from datetime import datetime
 
@@ -453,6 +454,53 @@ class ReportExporter:
 
         wb.save(filename)
         print(f"💾 저장 완료: {filename}")
+
+    # ══════════════════════════════════════════════════════════════════
+    # HTML 저장 (GitHub Pages 용)
+    # ══════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _html_table(df: pd.DataFrame) -> str:
+        if df is None or df.empty:
+            return '<p class="empty">시그널 종목 없음</p>'
+        d = df.copy().astype(str).map(html.escape)
+        if "티커" in d.columns:
+            d["티커"] = d["티커"].map(
+                lambda t: f'<a href="https://www.tradingview.com/chart/?symbol={t}" target="_blank">{t}</a>')
+        if "수익률 (%)" in d.columns:
+            d["수익률 (%)"] = [
+                f'<span class="{"dn" if v.startswith("-") else "up"}">{v}</span>'
+                for v in d["수익률 (%)"]]
+        return '<div class="scroll">' + d.to_html(index=False, escape=False, border=0) + "</div>"
+
+    def save_html(self, filename: str, sections: list[tuple[str, pd.DataFrame]]) -> None:
+        """[(제목, DataFrame), ...] 를 한 페이지 HTML 로 저장합니다."""
+        nav  = "".join(f'<a href="#s{i}">{html.escape(t)} '
+                       f'<b>{0 if df is None else len(df)}</b></a>'
+                       for i, (t, df) in enumerate(sections))
+        body = "".join(f'<section id="s{i}"><h2>{html.escape(t)}</h2>{self._html_table(df)}</section>'
+                       for i, (t, df) in enumerate(sections))
+        page = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>S&amp;P500 Scanner</title><style>
+:root{{--bg:#f6f7fb;--fg:#1a1a2e;--card:#fff;--line:#e2e4ec;--mut:#6b7080;--acc:#1b4f72;--up:#0a8f3c;--dn:#d0312d}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#11131a;--fg:#e6e8ef;--card:#1a1d27;--line:#2b2f3c;--mut:#9aa0b0;--acc:#7fb8e6;--up:#3ccf6e;--dn:#ff6b62}}}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Malgun Gothic",sans-serif}}
+header{{padding:16px}}h1{{margin:0;font-size:20px}}header p{{margin:4px 0 0;color:var(--mut)}}
+nav{{position:sticky;top:0;display:flex;gap:6px;overflow-x:auto;padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--line)}}
+nav a{{flex:none;padding:4px 10px;border:1px solid var(--line);border-radius:14px;color:var(--fg);text-decoration:none;background:var(--card)}}
+section{{margin:16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;scroll-margin-top:52px}}
+h2{{margin:0 0 8px;font-size:16px}}.scroll{{overflow-x:auto}}
+table{{border-collapse:collapse;width:100%;white-space:nowrap;font-variant-numeric:tabular-nums}}
+th,td{{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right}}
+th{{color:var(--mut);font-weight:600}}
+td:first-child,th:first-child{{text-align:left}}a{{color:var(--acc);font-weight:600}}
+.up{{color:var(--up)}}.dn{{color:var(--dn)}}.empty{{color:var(--mut)}}
+</style></head><body><header><h1>S&amp;P500 Scanner</h1>
+<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 일목균형표 / 컵앤핸들 / 캔들</p></header>
+<nav>{nav}</nav>{body}</body></html>"""
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(page)
+        print(f"🌐 HTML 저장 완료: {filename}")
 
     # ══════════════════════════════════════════════════════════════════
     # 이미지 저장
