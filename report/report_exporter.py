@@ -15,6 +15,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from config.settings import Config
+from scanner.data_fetcher import DataFetcher
 
 
 class ReportExporter:
@@ -466,7 +467,6 @@ class ReportExporter:
     def _ticker_chart(self, ticker: str, tf: str, level=None, js=False) -> str | None:
         """최근 120봉 캔들 + 일목 구름/기준선 (+ 돌파 기준선) Plotly div."""
         import plotly.graph_objects as go
-        from scanner.data_fetcher import DataFetcher
         from scanner.ichimoku_analyzer import IchimokuAnalyzer
         from scanner.scanner_runner import ScannerRunner
 
@@ -521,6 +521,8 @@ class ReportExporter:
             return '<p class="empty">시그널 종목 없음</p>'
         d = df.reset_index(drop=True).astype(str).map(html.escape)
         if "티커" in d.columns:
+            d.insert(d.columns.get_loc("티커") + 1, "회사명",
+                     [html.escape(DataFetcher.NAMES.get(html.unescape(t), "")) for t in d["티커"]])
             tv = "https://www.tradingview.com/chart/?symbol="
             d["티커"] = [
                 f'<a href="{h}">{t}</a>' if (h := href and href(i))
@@ -550,9 +552,11 @@ class ReportExporter:
                         continue
                     meta = " · ".join(html.escape(str(row[c]))
                                       for c in ("타임프레임", "시그널 유형", "종가 ($)") if c in row)
-                    et = html.escape(t)
+                    et   = html.escape(t)
+                    name = html.escape(DataFetcher.NAMES.get(t, ""))
                     cards.append(f'<div class="card" id="c{si}-{ri}"><div class="card-h">'
-                                 f'<a href="{tv}{et}" target="_blank">{et}</a><span>{meta}</span></div>'
+                                 f'<span class="nm"><a href="{tv}{et}" target="_blank">{et}</a> {name}</span>'
+                                 f'<span>{meta}</span></div>'
                                  f'{cache[key]}</div>')
                     ids.add(ri)
             href = lambda i, si=si, ids=ids: f"#c{si}-{i}" if i in ids else None
@@ -584,6 +588,9 @@ td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weig
 .card:target{{border-color:var(--accent)}}
 .card-h{{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:12px;color:var(--muted)}}
 .card-h a{{font-size:15px}}
+.nm{{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.card-h span:last-child{{flex:none}}
+td:nth-child(2),th:nth-child(2){{text-align:left;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
 <p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 녹색·적색 구름=일목(상승·하락) · 노란선=기준선 · 점선=돌파 기준선</p></header>
 <nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""

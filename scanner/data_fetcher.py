@@ -40,6 +40,9 @@ _FALLBACK_TICKERS: list[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 
 class DataFetcher:
 
+    # 티커 → 회사명 (get_tickers 가 위키 표에서 채움, 리포트 표시용)
+    NAMES: dict[str, str] = {}
+
     # ── 유니버스별 티커 수집 ────────────────────────────────────────────
     @staticmethod
     def _fetch_from_wiki(universe_key: str) -> list[str]:
@@ -60,6 +63,12 @@ class DataFetcher:
                         .str.replace(".", "-", regex=False)
                         .tolist()
                     )
+                    name_col = next((c for c in ("Security", "Company") if c in table.columns), None)
+                    if name_col:
+                        rows = table[[src["col"], name_col]].dropna()
+                        DataFetcher.NAMES.update(
+                            zip(rows[src["col"]].astype(str).str.replace(".", "-", regex=False),
+                                rows[name_col].astype(str)))
                     print(f"  ✅ {src['label']}: {len(tickers)}개 수집 완료")
                     return tickers
             print(f"  ⚠️  {src['label']}: 컬럼 '{src['col']}' 없음")
