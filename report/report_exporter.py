@@ -458,46 +458,122 @@ class ReportExporter:
     # ══════════════════════════════════════════════════════════════════
     # HTML 저장 (GitHub Pages 용)
     # ══════════════════════════════════════════════════════════════════
+    # 매크로 대시보드와 같은 팔레트
+    _BG, _PAPER, _GRID = "#0d1117", "#161b22", "#21262d"
+    _FONT = "Inter, 'Nanum Gothic', sans-serif"
+    MAX_CHARTS = 30   # 섹션당 차트 수 상한 (페이지 크기 제한)
+
+    def _ticker_chart(self, ticker: str, tf: str, level=None, js=False) -> str | None:
+        """최근 120봉 캔들 + 일목 구름/기준선 (+ 돌파 기준선) Plotly div."""
+        import plotly.graph_objects as go
+        from scanner.data_fetcher import DataFetcher
+        from scanner.ichimoku_analyzer import IchimokuAnalyzer
+        from scanner.scanner_runner import ScannerRunner
+
+        if tf not in ScannerRunner.TIMEFRAMES:
+            return None
+        interval, period = ScannerRunner.TIMEFRAMES[tf]
+        raw = DataFetcher.fetch_with_cfg(ticker, period, interval, self.cfg)
+        if raw.empty:
+            return None
+        df = IchimokuAnalyzer(self.cfg).compute(raw).tail(120)
+        x  = df.index
+        fig = go.Figure([
+            go.Scatter(x=x, y=df["senkou_a"], line=dict(width=0), hoverinfo="skip", showlegend=False),
+            go.Scatter(x=x, y=df["senkou_b"], line=dict(width=0), fill="tonexty",
+                       fillcolor="rgba(0,212,255,.12)", hoverinfo="skip", showlegend=False),
+            go.Scatter(x=x, y=df["kijun"], line=dict(color="#ffd166", width=1), name="기준선"),
+            go.Candlestick(x=x, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
+                           increasing_line_color="#3fb950", decreasing_line_color="#f85149",
+                           name=ticker),
+        ])
+        if level is not None and not pd.isna(level):
+            fig.add_hline(y=float(level), line_dash="dot", line_color="#00d4ff", line_width=1)
+        fig.update_xaxes(fixedrange=True, gridcolor=self._GRID, rangeslider_visible=False,
+                         rangebreaks=[dict(bounds=["sat", "mon"])] if interval == "1d" else None)
+        fig.update_yaxes(fixedrange=True, gridcolor=self._GRID, side="right")
+        fig.update_layout(
+            template="plotly_dark", dragmode=False, height=260, showlegend=False,
+            paper_bgcolor=self._PAPER, plot_bgcolor=self._BG,
+            font=dict(family=self._FONT, color="#c9d1d9", size=11),
+            margin=dict(l=8, r=8, t=8, b=24), hovermode="x unified",
+        )
+        return fig.to_html(full_html=False, include_plotlyjs="cdn" if js else False,
+                           config={"displayModeBar": False, "responsive": True, "scrollZoom": False})
+
     @staticmethod
-    def _html_table(df: pd.DataFrame) -> str:
+    def _html_table(df: pd.DataFrame, href=None) -> str:
+        """href(i) 가 주소를 주면 티커를 그 주소로, 아니면 TradingView 로 연결."""
         if df is None or df.empty:
             return '<p class="empty">시그널 종목 없음</p>'
-        d = df.copy().astype(str).map(html.escape)
+        d = df.reset_index(drop=True).astype(str).map(html.escape)
         if "티커" in d.columns:
-            d["티커"] = d["티커"].map(
-                lambda t: f'<a href="https://www.tradingview.com/chart/?symbol={t}" target="_blank">{t}</a>')
+            tv = "https://www.tradingview.com/chart/?symbol="
+            d["티커"] = [
+                f'<a href="{h}">{t}</a>' if (h := href and href(i))
+                else f'<a href="{tv}{t}" target="_blank">{t}</a>'
+                for i, t in enumerate(d["티커"])]
         if "수익률 (%)" in d.columns:
             d["수익률 (%)"] = [
                 f'<span class="{"dn" if v.startswith("-") else "up"}">{v}</span>'
                 for v in d["수익률 (%)"]]
         return '<div class="scroll">' + d.to_html(index=False, escape=False, border=0) + "</div>"
 
-    def save_html(self, filename: str, sections: list[tuple[str, pd.DataFrame]]) -> None:
-        """[(제목, DataFrame), ...] 를 한 페이지 HTML 로 저장합니다."""
-        nav  = "".join(f'<a href="#s{i}">{html.escape(t)} '
-                       f'<b>{0 if df is None else len(df)}</b></a>'
-                       for i, (t, df) in enumerate(sections))
-        body = "".join(f'<section id="s{i}"><h2>{html.escape(t)}</h2>{self._html_table(df)}</section>'
-                       for i, (t, df) in enumerate(sections))
+    def save_html(self, filename: str, sections: list[tuple[str, pd.DataFrame, bool]]) -> None:
+        """[(제목, DataFrame, 차트여부), ...] 를 한 페이지 HTML 로 저장합니다."""
+        tv = "https://www.tradingview.com/chart/?symbol="
+        nav, body, cache = [], [], {}
+        for si, (title, df, with_chart) in enumerate(sections):
+            n = 0 if df is None else len(df)
+            nav.append(f'<a href="#s{si}">{html.escape(title)} <b>{n}</b></a>')
+            cards, ids = [], set()
+            if with_chart and n:
+                for ri, row in df.reset_index(drop=True).head(self.MAX_CHARTS).iterrows():
+                    t, tf = str(row["티커"]), str(row.get("타임프레임", "일봉"))
+                    key = (t, tf, row.get("돌파 기준선"))
+                    if key not in cache:
+                        cache[key] = self._ticker_chart(t, tf, key[2], js=not any(cache.values()))
+                    if not cache[key]:
+                        continue
+                    meta = " · ".join(html.escape(str(row[c]))
+                                      for c in ("타임프레임", "시그널 유형", "종가 ($)") if c in row)
+                    et = html.escape(t)
+                    cards.append(f'<div class="card" id="c{si}-{ri}"><div class="card-h">'
+                                 f'<a href="{tv}{et}" target="_blank">{et}</a><span>{meta}</span></div>'
+                                 f'{cache[key]}</div>')
+                    ids.add(ri)
+            href = lambda i, si=si, ids=ids: f"#c{si}-{i}" if i in ids else None
+            grid = f'<div class="grid">{"".join(cards)}</div>' if cards else ""
+            body.append(f'<section id="s{si}"><h2>{html.escape(title)}</h2>'
+                        f'{self._html_table(df, href)}{grid}</section>')
+
         page = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>S&amp;P500 Scanner</title><style>
-:root{{--bg:#f6f7fb;--fg:#1a1a2e;--card:#fff;--line:#e2e4ec;--mut:#6b7080;--acc:#1b4f72;--up:#0a8f3c;--dn:#d0312d}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#11131a;--fg:#e6e8ef;--card:#1a1d27;--line:#2b2f3c;--mut:#9aa0b0;--acc:#7fb8e6;--up:#3ccf6e;--dn:#ff6b62}}}}
-body{{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Malgun Gothic",sans-serif}}
-header{{padding:16px}}h1{{margin:0;font-size:20px}}header p{{margin:4px 0 0;color:var(--mut)}}
-nav{{position:sticky;top:0;display:flex;gap:6px;overflow-x:auto;padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--line)}}
-nav a{{flex:none;padding:4px 10px;border:1px solid var(--line);border-radius:14px;color:var(--fg);text-decoration:none;background:var(--card)}}
-section{{margin:16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;scroll-margin-top:52px}}
-h2{{margin:0 0 8px;font-size:16px}}.scroll{{overflow-x:auto}}
+:root{{--bg:#0d1117;--surface:#161b22;--border:#21262d;--accent:#00d4ff;--text:#c9d1d9;--muted:#8b949e;--up:#3fb950;--down:#f85149;--font:'Inter','Nanum Gothic',sans-serif}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font)}}
+header{{padding:20px 16px 12px;border-bottom:1px solid var(--border)}}
+h1{{margin:0;font-size:20px;color:var(--accent)}}header p{{margin:4px 0 0;color:var(--muted);font-size:12px}}
+nav{{position:sticky;top:0;z-index:10;display:flex;gap:6px;overflow-x:auto;padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border)}}
+nav a{{flex:none;padding:4px 12px;border:1px solid var(--border);border-radius:14px;color:var(--muted);text-decoration:none;background:var(--surface);font-size:13px}}
+nav a b{{color:var(--accent)}}
+section{{max-width:1200px;margin:16px auto;padding:0 16px;scroll-margin-top:52px}}
+h2{{margin:0 0 10px;font-size:15px;color:var(--text);border-left:3px solid var(--accent);padding-left:8px}}
+.scroll{{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px}}
 table{{border-collapse:collapse;width:100%;white-space:nowrap;font-variant-numeric:tabular-nums}}
-th,td{{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right}}
-th{{color:var(--mut);font-weight:600}}
-td:first-child,th:first-child{{text-align:left}}a{{color:var(--acc);font-weight:600}}
-.up{{color:var(--up)}}.dn{{color:var(--dn)}}.empty{{color:var(--mut)}}
+th,td{{padding:7px 12px;border-bottom:1px solid var(--border);text-align:right}}
+th{{color:var(--muted);font-weight:600;font-size:12px}}tr:hover td{{background:rgba(255,255,255,.02)}}
+td:first-child,th:first-child{{text-align:left}}a{{color:var(--accent);font-weight:700;text-decoration:none}}
+.up{{color:var(--up)}}.dn{{color:var(--down)}}.empty{{color:var(--muted)}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:12px;margin-top:12px}}
+.card{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;min-width:0;scroll-margin-top:60px}}
+.card:target{{border-color:var(--accent)}}
+.card-h{{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:12px;color:var(--muted)}}
+.card-h a{{font-size:15px}}
 </style></head><body><header><h1>S&amp;P500 Scanner</h1>
-<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 일목균형표 / 컵앤핸들 / 캔들</p></header>
-<nav>{nav}</nav>{body}</body></html>"""
+<p>{self.today_str} · {datetime.now().strftime("%H:%M")} 생성 · 차트: 최근 120봉 · 하늘색 구름=일목 · 노란선=기준선 · 점선=돌파 기준선</p></header>
+<nav>{"".join(nav)}</nav>{"".join(body)}</body></html>"""
         with open(filename, "w", encoding="utf-8") as f:
             f.write(page)
         print(f"🌐 HTML 저장 완료: {filename}")

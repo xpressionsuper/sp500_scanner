@@ -118,12 +118,12 @@ def main() -> None:
 
     # ── 6.5 HTML (결과가 없어도 항상 생성 → Pages 배포)
     exporter.save_html("index.html", [
-        ("일목균형표",      final_ich),
-        ("컵앤핸들",        final_cup),
-        ("캔들 패턴",       final_candle),
-        ("백테스트·일목",   df_bt_ich),
-        ("백테스트·컵핸들", df_bt_cup),
-        ("백테스트·캔들",   df_bt_candle),
+        ("일목균형표",      final_ich, True),
+        ("컵앤핸들",        final_cup, True),
+        ("캔들 패턴",       final_candle, True),
+        ("백테스트·일목",   df_bt_ich, False),
+        ("백테스트·컵핸들", df_bt_cup, False),
+        ("백테스트·캔들",   df_bt_candle, False),
     ])
 
     # ── 7. 저장
