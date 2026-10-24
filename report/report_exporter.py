@@ -556,7 +556,9 @@ class ReportExporter:
         if df is None or df.empty:
             return '<p class="empty">시그널 종목 없음</p>'
         src = df.reset_index(drop=True)
-        d = src[[c for c in ReportExporter.HTML_COLS if c in src.columns]].astype(str).map(html.escape)
+        # 빈 값(NaN)은 빈 칸 — pandas 3.1+ 은 astype(str) 후에도 NaN 을 float 로 남김
+        d = src[[c for c in ReportExporter.HTML_COLS if c in src.columns]].map(
+            lambda v: "" if pd.isna(v) else html.escape(str(v)))
         tickers = src["티커"].astype(str)
         sector  = [DataFetcher.SECTORS.get(t, "") for t in tickers]
         d.insert(1, "회사명", [html.escape(DataFetcher.NAMES.get(t, "")) for t in tickers])
