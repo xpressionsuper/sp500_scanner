@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -39,6 +39,14 @@ jobs:
         run: python main.py
         env:
           TZ: Asia/Seoul
+
+      - name: 🗂️ 결과 기록 커밋 (history/YYYY-MM-DD.csv, main.py 가 생성·정리)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add history
+          git commit -m "Scan result $(TZ=Asia/Seoul date +%F)" || exit 0
+          git pull --rebase && git push
 
       - name: 🌐 Pages용 파일 준비
         run: mkdir site && cp index.html site/

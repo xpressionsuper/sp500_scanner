@@ -6,6 +6,8 @@ main.py — 스캐너 실행 진입점
 """
 
 import warnings
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 
@@ -28,6 +30,21 @@ SIGNALS = [
     ("candle",    "캔들 패턴",   "candle",    "ichimoku"),
     ("cup",       "컵앤핸들",    "cup",       "ichimoku"),
 ]
+
+
+HISTORY_DIR, HISTORY_KEEP = Path("history"), 250   # 약 1년치 거래일
+
+
+def save_history(scan: dict) -> None:
+    """오늘 스캔 결과를 시그널 종류 열과 함께 CSV 한 장으로 저장하고, 오래된 파일은 지웁니다."""
+    HISTORY_DIR.mkdir(exist_ok=True)
+    frames = [scan[key].assign(시그널=name) for key, name, *_ in SIGNALS if not scan[key].empty]
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["시그널"])
+    path = HISTORY_DIR / f"{datetime.now():%Y-%m-%d}.csv"
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+    for old in sorted(HISTORY_DIR.glob("*.csv"))[:-HISTORY_KEEP]:
+        old.unlink()
+    print(f"🗂️ 기록 저장: {path} ({len(df)}건)")
 
 
 def main() -> None:
@@ -90,7 +107,10 @@ def main() -> None:
           + f"  |  합계: {sum(len(scan[key]) for key, *_ in SIGNALS)}개")
     print("=" * 65)
 
-    # ── 7. HTML (결과가 없어도 항상 생성 → Pages 배포)
+    # ── 7. 기록: history/YYYY-MM-DD.csv (최근 HISTORY_KEEP 개만 유지)
+    save_history(scan)
+
+    # ── 8. HTML (결과가 없어도 항상 생성 → Pages 배포)
     exporter.save_html("index.html",
         [(name, scan[key], chart) for key, name, _, chart in SIGNALS] +
         [(f"백테스트·{name}", bt[key], None) for key, name, *_ in SIGNALS])
